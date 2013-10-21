@@ -20,25 +20,12 @@ logger = get_task_logger(__name__)
 
 
 # @with_server_arg() decorator
-def with_server_arg(only_server_arg=True):
+def get_server(nova_config):
 
-    def decor(orig):
-        def f(nova_config, **kwargs):
-            _fail_on_missing_required_parameters(nova_config, ('region',), 'nova_config')
-            region = nova_config['region']
-            nova_client = _init_client(region=region)
-            server = _get_server_by_name_or_fail(nova_client, nova_config['instance']['name'])
-
-            logger.info("Will run task {} for server {} with name {}".format(orig.__name__, server, nova_config['instance']['name']))
-            if only_server_arg:
-                return orig(server)
-            else:
-                return orig(server, nova_config)
-
-        f.__name__ = 'with_server_arg_for_' + orig.__name__
-        return f
-
-    return decor
+    _fail_on_missing_required_parameters(nova_config, ('region', 'instance'), 'nova_config')
+    region = nova_config['region']
+    nova_client = _init_client(region=region)
+    return _get_server_by_name_or_fail(nova_client, nova_config['instance']['name'])
 
 
 @task
@@ -94,8 +81,9 @@ def provision(__cloudify_id, nova_config, **kwargs):
 
 
 @task
-@with_server_arg(only_server_arg=False)
-def start(server, nova_config):
+def start(nova_config, **kwargs):
+
+    server = get_server(nova_config)
 
     # ACTIVE - already started
     # BUILD - is building and will start automatically after the build.
@@ -118,14 +106,14 @@ def start(server, nova_config):
 
 
 @task
-@with_server_arg()
-def stop(server):
+def stop(nova_config, **kwargs):
+    server = get_server(nova_config)
     server.stop()
 
 
 @task
-@with_server_arg()
-def terminate(server):
+def terminate(nova_config, **kwargs):
+    server = get_server(nova_config)
     server.delete()
 
 
