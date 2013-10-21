@@ -7,6 +7,9 @@ import sys
 import json
 
 from novaclient.v1_1 import client
+
+# TODO: rewrite, this is bad.
+# https://github.com/celery/celery/blob/9c00d0c67c0844e4b62d60839c55a79c64666c93/celery/contrib/methods.py#L45
 from celery import task
 
 from celery.utils.log import get_task_logger
@@ -14,6 +17,28 @@ from celery.utils.log import get_task_logger
 __author__ = 'elip'
 
 logger = get_task_logger(__name__)
+
+
+# @with_server_arg() decorator
+def with_server_arg(only_server_arg=True):
+
+    def decor(orig):
+        def f(nova_config, **kwargs):
+            _fail_on_missing_required_parameters(nova_config, ('region',), 'nova_config')
+            region = nova_config['region']
+            nova_client = _init_client(region=region)
+            server = _get_server_by_name_or_fail(nova_client, nova_config['instance']['name'])
+
+            logger.info("Will run task {} for server {} with name {}".format(orig.__name__, server, nova_config['instance']['name']))
+            if only_server_arg:
+                return orig(server)
+            else:
+                return orig(server, nova_config)
+
+        f.__name__ = 'with_server_arg_for_' + orig.__name__
+        return f
+
+    return decor
 
 
 @task
@@ -69,11 +94,8 @@ def provision(__cloudify_id, nova_config, **kwargs):
 
 
 @task
-def start(nova_config, **kwargs):
-    _fail_on_missing_required_parameters(nova_config, ('region',), 'nova_config')
-    region = nova_config['region']
-    nova_client = _init_client(region=region)
-    server = _get_server_by_name_or_fail(nova_client, nova_config['instance']['name'])
+@with_server_arg(only_server_arg=False)
+def start(server, nova_config):
 
     # ACTIVE - already started
     # BUILD - is building and will start automatically after the build.
@@ -85,7 +107,7 @@ def start(nova_config, **kwargs):
 
     # Rackspace: stop, start, pause, unpause, suspend - not implemented. Maybe other methods too.
     #            Calling reboot() on an instance that is 'SHUTOFF' will start it.
-    
+
     # SHUTOFF - powered off
     if server.status == 'SHUTOFF':
         server.reboot()
@@ -96,20 +118,14 @@ def start(nova_config, **kwargs):
 
 
 @task
-def stop(nova_config, **kwargs):
-    _fail_on_missing_required_parameters(nova_config, ('region',), 'nova_config')
-    region = nova_config['region']
-    nova_client = _init_client(region=region)
-    server = _get_server_by_name_or_fail(nova_client, nova_config['instance']['name'])
+@with_server_arg()
+def stop(server):
     server.stop()
 
 
 @task
-def terminate(nova_config, **kwargs):
-    _fail_on_missing_required_parameters(nova_config, ('region',), 'nova_config')
-    region = nova_config['region']
-    nova_client = _init_client(region=region)
-    server = _get_server_by_name_or_fail(nova_client, nova_config['instance']['name'])
+@with_server_arg()
+def terminate(server):
     server.delete()
 
 
@@ -123,15 +139,13 @@ def start_monitor(nova_config, **kwargs):
     ]
     if region:
         command.append("--region_name={0}".format(region))
-        
+
     logger.info('starting openstack monitoring [cmd=%s]', command)
     subprocess.Popen(command)
 
 
 def _init_client(region=None):
-    config_path = os.getenv('KEYSTONE_CONFIG_PATH', os.path.expanduser('~/keystone_config.json'))
-    with open(config_path, 'r') as f:
-        keystone_config = json.loads(f.read())
+    keystone_config = get_keystone_config()
     return client.Client(username=keystone_config['username'],
                          api_key=keystone_config['password'],
                          project_id=keystone_config['tenant_name'],
@@ -162,6 +176,13 @@ def _fail_on_missing_required_parameters(obj, required_parameters, hint_where):
         if k not in obj:
             raise ValueError("Required parameter '{0}' is missing (under host's properties.{1}). "
                              "Required parameters are: {2}".format(k, hint_where, required_parameters))
+
+
+def get_keystone_config():
+    config_path = os.getenv('KEYSTONE_CONFIG_PATH', os.path.expanduser('~/keystone_config.json'))
+    with open(config_path, 'r') as f:
+        keystone_config = json.loads(f.read())
+    return keystone_config
 
 
 # *** userdata handlig - start ***

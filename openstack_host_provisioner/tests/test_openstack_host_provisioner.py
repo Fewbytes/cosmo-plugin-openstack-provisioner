@@ -1,25 +1,32 @@
+#!/usr/bin/env python
+
 import argparse
-import logging
-import random
-import string
 import inspect
+import logging
+import os
+import random
+import sys
+import string
 import time
-from unittest import TestCase
-import nova_config
+import unittest
+
+sys.path.insert(0, os.path.join('..', '..'))
+
 from openstack_host_provisioner import tasks
 from openstack_host_provisioner import monitor
 
 __author__ = 'elip'
 
 
-class OpenstackProvisionerTestCase(TestCase):
+class OpenstackProvisionerTestCase(unittest.TestCase):
 
     def setUp(self):
         logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        self.keystone_config = tasks.get_keystone_config()
         self.logger = logging.getLogger("test_openstack_host_provisioner")
         self.logger.level = logging.DEBUG
         self.logger.info("setUp called")
-        self.nova_client = tasks._init_client(region=nova_config.region_name)
+        self.nova_client = tasks._init_client(region=self.keystone_config['region'])
         self.name_prefix = 'cosmo_test_openstack_host_provisioner_{0}_'.format(self._id_generator(3))
         self.logger.info("setup")
         self.timeout = 120
@@ -42,12 +49,12 @@ class OpenstackProvisionerTestCase(TestCase):
         self.logger.info("Provisioning server with name " + name)
         __cloudify_id = "{0}_cloudify_id".format(name)
         tasks.provision(__cloudify_id=__cloudify_id, nova_config={
-            'region': nova_config.region_name,
+            'region': self.keystone_config['region'],
             'instance': {
                 'name': name,
-                'image': nova_config.image_id,
-                'flavor': nova_config.flavor_id,
-                'key_name': nova_config.key_name,
+                'image': self.keystone_config['image'],
+                'flavor': self.keystone_config['flavor'],
+                'key_name': self.keystone_config['username'],
             }
         })
         self._wait_for_machine_state(__cloudify_id, u'running')
@@ -71,7 +78,7 @@ class OpenstackProvisionerTestCase(TestCase):
 
         self.logger.info("Terminating server with name " + name)
         tasks.terminate(nova_config={
-            'region': nova_config.region_name,
+            'region': self.keystone_config['region'],
             'instance': {
                 'name': name
             }
@@ -119,6 +126,9 @@ class OpenstackProvisionerTestCase(TestCase):
                 pass
 
         r = ReporterWaitingForMachineStatus()
-        args = argparse.Namespace(monitor_interval=3, region_name=nova_config.region_name)
+        args = argparse.Namespace(monitor_interval=3, region_name=self.keystone_config['region'])
         m = monitor.OpenstackStatusMonitor(r, args)
         m.start()
+
+if __name__ == '__main__':
+    unittest.main()

@@ -12,6 +12,12 @@
     #   The project_id - same as username or whatever "Project (top right of the dashboard screen)" says
     # In Rackspace:
     #   The account number
-    tenant_name: ""
+    tenant_name: "",
+
+    ### For tests only, other places use Cosmo provided values ###
+    region: "",
+    image: N,
+    flavor: M,
+    key_name: ""
 }
 
