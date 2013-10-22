@@ -118,8 +118,9 @@ def pause(nova_config, **kwargs):
 
 @task
 def restart(nova_config, **kwargs):
-    server = get_server(nova_config)
-    server.restart()
+    # Did not work on HP cloud. Not tested on Rackspace.
+    raise NotImplementedError("OpenStack host provisioner does not support restart()")
+
 
 
 # Not in DSL --- start
