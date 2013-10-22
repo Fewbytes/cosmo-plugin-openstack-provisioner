@@ -19,7 +19,6 @@ __author__ = 'elip'
 logger = get_task_logger(__name__)
 
 
-# @with_server_arg() decorator
 def get_server(nova_config):
 
     _fail_on_missing_required_parameters(nova_config, ('region', 'instance'), 'nova_config')
@@ -81,6 +80,12 @@ def provision(__cloudify_id, nova_config, **kwargs):
 
 
 @task
+def terminate(nova_config, **kwargs):
+    server = get_server(nova_config)
+    server.delete()
+
+
+@task
 def start(nova_config, **kwargs):
 
     server = get_server(nova_config)
@@ -106,15 +111,23 @@ def start(nova_config, **kwargs):
 
 
 @task
-def stop(nova_config, **kwargs):
+def pause(nova_config, **kwargs):
     server = get_server(nova_config)
-    server.stop()
+    server.pause()
 
 
 @task
-def terminate(nova_config, **kwargs):
+def restart(nova_config, **kwargs):
     server = get_server(nova_config)
-    server.delete()
+    server.restart()
+
+
+# Not in DSL --- start
+@task
+def stop(nova_config, **kwargs):
+    server = get_server(nova_config)
+    server.stop()
+# Not in DSL --- end
 
 
 @task

@@ -54,7 +54,7 @@ class OpenstackProvisionerTestCase(unittest.TestCase):
                 'name': name,
                 'image': self.keystone_config['image'],
                 'flavor': self.keystone_config['flavor'],
-                'key_name': self.keystone_config['username'],
+                'key_name': self.keystone_config['key_name'],
             }
         })
         self._wait_for_machine_state(__cloudify_id, u'running')
