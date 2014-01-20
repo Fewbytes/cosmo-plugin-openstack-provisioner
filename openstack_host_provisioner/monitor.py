@@ -68,7 +68,7 @@ class OpenstackStatusMonitor(object):
 
         now = int(time.time())
         for server in servers:
-            self.maybe_report_server(server, now)
+            self.report_server(server, now)
 
     def get_cloudify_id_from_server(self, server):
         try:
@@ -76,17 +76,13 @@ class OpenstackStatusMonitor(object):
         except KeyError:
             pass
 
-    def maybe_report_server(self, server, time):
-        if server.addresses.get('private', None):
-            self.report_server(server, time)
-
     def report_server(self, server, time):
         if server.status == 'ACTIVE':
             state = 'running'
         else:
             state = 'not running'
         event = {
-            'host': server.addresses['private'][0]['addr'],
+            'host': server.id,
             'service': 'openstack machine status',
             'time': time,
             'state': state,
