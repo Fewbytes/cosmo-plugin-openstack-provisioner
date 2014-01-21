@@ -1,3 +1,4 @@
+# vim: ts=4 sw=4 et
 import copy
 import inspect
 import itertools
@@ -11,13 +12,15 @@ from celery import task
 
 from celery.utils.log import get_task_logger
 
+import cosmo_plugin_openstack_common as os_common
+
 __author__ = 'elip'
 
 logger = get_task_logger(__name__)
 
 
 @task
-def provision(__cloudify_id, nova_config, **kwargs):
+def provision(__cloudify_id, nova_config, management_network_name, **kwargs):
 
     """
     Creates a server. Exposes the parameters mentioned in
@@ -40,6 +43,11 @@ def provision(__cloudify_id, nova_config, **kwargs):
     # For possible changes by _maybe_transform_userdata()
     nova_instance = copy.deepcopy(nova_config['instance'])
 
+    if nova_instance.get('nics'):
+        raise ValueError("Parameter with name 'nics' must not be passed to"
+                         " openstack provisioner (under host's "
+                         "properties.nova.instance)".format(k))
+
     _maybe_transform_userdata(nova_instance)
 
     _fail_on_missing_required_parameters(
@@ -47,7 +55,13 @@ def provision(__cloudify_id, nova_config, **kwargs):
         ('name', 'flavor', 'image', 'key_name'),
         'nova_config.instance')
 
-    nova_client = _init_client(region=nova_config['region'])
+    nc = os_common.NeutronClient().get()
+
+    net_id = nc.cosmo_get_object_of_type_with_name('network', management_network_name)['id']
+    nova_instance['nics'] = [{'net-id': net_id}]
+    # print(nova_instance['nics'])
+
+    nova_client = os_common.NovaClient().get(region=nova_config['region'])
 
     # First parameter is 'self', skipping
     params_names = inspect.getargspec(nova_client.servers.create).args[1:]
@@ -89,8 +103,7 @@ def start(__cloudify_id, nova_config, **kwargs):
     _fail_on_missing_required_parameters(nova_config,
                                          ('region',),
                                          'nova_config')
-    region = nova_config['region']
-    nova_client = _init_client(region=region)
+    nova_client = os_common.NovaClient().get(region=nova_config['region'])
     server = _get_server_by_name_or_fail(nova_client,
                                          nova_config['instance']['name'])
 
@@ -121,8 +134,7 @@ def stop(nova_config, **kwargs):
     _fail_on_missing_required_parameters(nova_config,
                                          ('region',),
                                          'nova_config')
-    region = nova_config['region']
-    nova_client = _init_client(region=region)
+    nova_client = os_common.NovaClient().get(region=nova_config['region'])
     server = _get_server_by_name_or_fail(nova_client,
                                          nova_config['instance']['name'])
     server.stop()
@@ -132,8 +144,7 @@ def stop(nova_config, **kwargs):
 def terminate(nova_config, **kwargs):
     _fail_on_missing_required_parameters(nova_config,
                                          ('region',), 'nova_config')
-    region = nova_config['region']
-    nova_client = _init_client(region=region)
+    nova_client = os_common.NovaClient().get(region=nova_config['region'])
     server = _get_server_by_name_or_fail(nova_client,
                                          nova_config['instance']['name'])
     server.delete()
@@ -156,17 +167,16 @@ def start_monitor(nova_config, **kwargs):
     subprocess.Popen(command)
 
 
-def _init_client(region=None):
-    config_path = os.getenv('KEYSTONE_CONFIG_PATH',
-                            os.path.expanduser('~/keystone_config.json'))
-    with open(config_path, 'r') as f:
-        keystone_config = json.loads(f.read())
-    return client.Client(username=keystone_config['username'],
-                         api_key=keystone_config['password'],
-                         project_id=keystone_config['tenant_name'],
-                         auth_url=keystone_config['auth_url'],
-                         region_name=region,
-                         http_log_debug=False)
+@task
+def connect_network(__source_properties, __target_properties, **kwargs):
+    network = __source_properties['network']
+    nova_config = __target_properties['nova_config']
+
+    nova_client = os_common.NovaClient().get(region=nova_config['region'])
+
+    server = _get_server_by_name_or_fail(nova_client, nova_config['instance']['name'])
+    network = os_common.NeutronClient().get().cosmo_get_object_of_type_with_name('network', network['name'])
+    server.interface_attach(None, network['id'], None)
 
 
 def _get_server_by_name(nova_client, name):

@@ -23,6 +23,7 @@ import logging
 import bernhard
 import tasks
 
+import cosmo_plugin_openstack_common as os_common
 
 class Reporter(object):
 
@@ -50,7 +51,7 @@ class OpenstackStatusMonitor(object):
     def __init__(self, reporter, args):
         self.reporter = reporter
         self.interval = args.monitor_interval
-        self.nova = tasks._init_client(region=args.region_name)
+        self.nova = os_common.NovaClient().get(region=args.region_name)
         self.continue_running = True
         self.ttl = self.interval * 3
 

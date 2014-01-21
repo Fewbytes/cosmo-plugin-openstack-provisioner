@@ -1,4 +1,5 @@
-region_name = 'az-2.region-a.geo-1'
+# region_name = 'region-b.geo-1'
+region_name = ''
 flavor_id = 100
-image_id = 221
-key_name = 'head'
+image_id = '8c096c29-a666-4b82-99c4-c77dc70cfb40'
+key_name = 'ilya'

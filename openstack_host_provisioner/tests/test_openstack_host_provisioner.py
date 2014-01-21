@@ -1,61 +1,44 @@
+#!/usr/bin/env python
+# vim: ts=4 sw=4 et
+
 import argparse
-import logging
-import random
-import string
 import inspect
 import time
-from unittest import TestCase
-import nova_config
+import unittest
 from openstack_host_provisioner import tasks
 from openstack_host_provisioner import monitor
 
+from openstack_neutron_network_provisioner import tasks as net_tasks
+from openstack_neutron_subnet_provisioner import tasks as subnet_tasks
+
+# import cosmo_plugin_common as plugin_common
+
+import cosmo_plugin_openstack_common as os_common
+
 __author__ = 'elip'
 
+TEST_WITH_N_NETS = 3
 
-class OpenstackProvisionerTestCase(TestCase):
 
-    def setUp(self):
-        logging.basicConfig(
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        self.logger = logging.getLogger("test_openstack_host_provisioner")
-        self.logger.level = logging.DEBUG
-        self.logger.info("setUp called")
-        self.nova_client = tasks._init_client(region=nova_config.region_name)
-        self.name_prefix = 'cosmo_test_openstack_host_provisioner_{0}_'\
-            .format(self._id_generator(3))
-        self.logger.info("setup")
-        self.timeout = 120
+class OpenstackProvisionerTestCase(os_common.TestCase):
 
-    def tearDown(self):
-        self.logger.info("tearDown called")
-        servers_list = self.nova_client.servers.list()
-        for server in servers_list:
-            if server.name.startswith(self.name_prefix):
-                self.logger.info("Deleting server with name " + server.name)
-                try:
-                    server.delete()
-                except BaseException:
-                    self.logger.warning("Failed to delete server with name "
-                                        + server.name)
-            else:
-                self.logger.info("NOT deleting server with name "
-                                 + server.name)
-
-    def _provision(self, name):
+    def _provision(self, name, management_network_name):
         # Only used once but will probably be reused in future
+        nova_client = os_common.NovaClient().get(region=tests_config['region'])
         self.logger.info("Provisioning server with name " + name)
         __cloudify_id = "{0}_cloudify_id".format(name)
         tasks.provision(__cloudify_id=__cloudify_id, nova_config={
-            'region': nova_config.region_name,
+            'region': tests_config['region'],
             'instance': {
                 'name': name,
-                'image': nova_config.image_id,
-                'flavor': nova_config.flavor_id,
-                'key_name': nova_config.key_name,
+                'image': nova_client.images.find(name=tests_config['image_name']).id,
+                'flavor': tests_config['flavor_id'],
+                'key_name': tests_config['key_name'],
             }
-        })
+        }, management_network_name=management_network_name)
         self._wait_for_machine_state(__cloudify_id, u'running')
 
+    @unittest.skip("TEMP!")
     def test_provision_terminate(self):
         """
         Test server termination by Nova.
@@ -68,14 +51,16 @@ class OpenstackProvisionerTestCase(TestCase):
         trivial task.
         """
 
-        self.logger.info("Running " + str(inspect.stack()[0][3] + " : "))
-        name = self.name_prefix + "test_provision_terminate"
+        nova_client = self.get_nova_client()
 
-        self._provision(name)
+        self.logger.info("Running " + str(inspect.stack()[0][3] + " : "))
+        name = self.name_prefix + "provision_terminate"
+
+        self._provision(name, management_network_name=self._create_net(254)['name'])
 
         self.logger.info("Terminating server with name " + name)
         tasks.terminate(nova_config={
-            'region': nova_config.region_name,
+            'region': tests_config['region'],
             'instance': {
                 'name': name
             }
@@ -85,7 +70,7 @@ class OpenstackProvisionerTestCase(TestCase):
         expire = time.time() + timeout
         while time.time() < expire:
             self.logger.info("Querying server by name " + name)
-            by_name = tasks._get_server_by_name(self.nova_client, name)
+            by_name = tasks._get_server_by_name(nova_client, name)
             if not by_name:
                 self.logger.info("Server has terminated. All good")
                 return
@@ -96,9 +81,43 @@ class OpenstackProvisionerTestCase(TestCase):
                                                      "after {0} seconds"
                                                      .format(timeout))
 
-    def _id_generator(self, size=6,
-                      chars=string.ascii_uppercase + string.digits):
-        return ''.join(random.choice(chars) for x in range(size))
+    def _create_net(self, i):
+        nc = self.get_neutron_client()
+        name = self.name_prefix + 'net_10_1_' + str(i)
+        net = nc.create_network({
+            'network': {
+                'name': name,
+                'admin_state_up': True
+            }
+        })['network']
+        subnet = nc.create_subnet({
+            'subnet': {
+                'network_id': net['id'],
+                'ip_version': 4,
+                'cidr': '10.1.' + str(i) + '.0/24',
+            }
+        })
+        return net
+
+    def test_with_subnets(self):
+        networks = [self._create_net(i) for i in range(1, TEST_WITH_N_NETS+1)]
+        name = self.name_prefix + 'server_with_nics'
+        self._provision(name, management_network_name=networks[0]['name'])
+        for network in networks[1:]:
+            tasks.connect_network(
+                {'network': {'name': network['name']}},
+                {'nova_config': {'region': tests_config['region'], 'instance': {'name': name}}},
+            )
+        nc = self.get_nova_client()
+        server = nc.servers.find(name=name)
+        networks_names = server.networks.keys()
+        for network in networks:
+            self.assertIn(network['name'], networks_names)
+        server.delete()
+        # I'm really sorry. Can't cleanup networks because the call
+        # is async and the networks are still in use.
+        time.sleep(15)
+
 
     def _wait_for_machine_state(self, cloudify_id, expected_state):
 
@@ -136,6 +155,11 @@ class OpenstackProvisionerTestCase(TestCase):
 
         r = ReporterWaitingForMachineStatus()
         args = argparse.Namespace(monitor_interval=3,
-                                  region_name=nova_config.region_name)
+                                  region_name=tests_config['region'])
         m = monitor.OpenstackStatusMonitor(r, args)
         m.start()
+
+
+if __name__ == '__main__':
+    tests_config = os_common.TestsConfig().get()
+    unittest.main()
