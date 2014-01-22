@@ -1,0 +1,80 @@
+# vim: ts=4 sw=4 et
+imports:
+    - 'cloudify.types'
+    - 'openstack-host-type.yaml'
+    - 'neutron-network-type.yaml'
+    - 'neutron-subnet-type.yaml'
+
+
+blueprint:
+    name: 'neutron-router-test'
+    topology:
+
+        -
+            name: 'server'
+            type: 'openstack_host'
+            properties:
+                nova_config:
+                    region: ''
+                    instance:
+                        name: 'nics-test'
+                        image: 'cirros-0.3.1-x86_64-uec'
+                        flavor: 1
+                        key_name: 'ilya'
+            policies:
+                -
+                    name: 'start_detection_policy'
+                    rules:
+                        -
+                            type: 'state_equals'
+                            properties:
+                                service: 'router status'
+                                state: 'running'
+
+        -
+            name: 'neutron_network'
+            type: 'neutron_network'
+            relationships:
+                -
+                    type: 'cloudify.relationships.connected_to'
+                    target: 'server'
+                    target_interfaces:
+                        cloudify.interfaces.relationship_lifecycle:
+                            - establish: cloudify.plugins.openstack_host_provisioner.tasks.connect_network
+            properties:
+                network:
+                    name: 'neutron_network_test'
+
+            policies:
+                -
+                    name: 'start_detection_policy'
+                    rules:
+                        -
+                            type: 'state_equals'
+                            properties:
+                                service: 'network status'
+                                state: 'running'
+        -
+            name: 'neutron_subnet'
+            type: 'neutron_subnet'
+            relationships:
+                -
+                    type: 'cloudify.relationships.contained_in'
+                    target: 'neutron_network'
+            properties:
+                network_name: 'neutron_network_test'
+                subnet:
+                    name: 'neutron_subnet_test'
+                    ip_version: 4
+                    cidr: '10.10.10.0/24'
+
+            policies:
+                -
+                    name: 'start_detection_policy'
+                    rules:
+                        -
+                            type: 'state_equals'
+                            properties:
+                                service: 'subnet status'
+                                state: 'running'
+

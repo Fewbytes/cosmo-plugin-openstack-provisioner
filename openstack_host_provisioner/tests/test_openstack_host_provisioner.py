@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 # vim: ts=4 sw=4 et
 
+# *** IMPORTANT ***
+# Please make sure to point OS_TESTS_CONFIG_PATH environment variable
+# to the file os_tests_config.devstack.json, or place the file in your
+# home directory. You might need to edit the file.
+
 import argparse
 import inspect
 import time
@@ -18,6 +23,8 @@ import cosmo_plugin_openstack_common as os_common
 __author__ = 'elip'
 
 TEST_WITH_N_NETS = 3
+RETRIES = 10
+SLEEP = 5
 
 
 class OpenstackProvisionerTestCase(os_common.TestCase):
@@ -108,15 +115,38 @@ class OpenstackProvisionerTestCase(os_common.TestCase):
                 {'network': {'name': network['name']}},
                 {'nova_config': {'region': tests_config['region'], 'instance': {'name': name}}},
             )
-        nc = self.get_nova_client()
-        server = nc.servers.find(name=name)
+        nova_client = self.get_nova_client()
+        server = nova_client.servers.find(name=name)
         networks_names = server.networks.keys()
         for network in networks:
             self.assertIn(network['name'], networks_names)
+
+        network_to_disconnect = networks[-1]
+        tasks.disconnect_network(
+            {'network': {'name': network_to_disconnect['name']}},
+            {'nova_config': {'region': tests_config['region'], 'instance': {'name': name}}},
+        )
+
+
+        port_detach_ok = False
+        for i in range(1, RETRIES+1):
+            self.logger.debug("Port detach check {0}/{1}".format(i, RETRIES))
+            server = nova_client.servers.find(name=name)
+            networks_names = server.networks.keys()
+            port_detach_ok = (
+                all([network['name'] in networks_names for network in networks[:-1]]) and
+                network_to_disconnect['name'] not in networks_names
+            )
+            if port_detach_ok:
+                break
+            time.sleep(SLEEP)
+        self.assertTrue(
+            port_detach_ok,
+            'Detaching network {0} from server {1} failed'
+            .format(network_to_disconnect['id'], server.id)
+        )
+
         server.delete()
-        # I'm really sorry. Can't cleanup networks because the call
-        # is async and the networks are still in use.
-        time.sleep(15)
 
 
     def _wait_for_machine_state(self, cloudify_id, expected_state):

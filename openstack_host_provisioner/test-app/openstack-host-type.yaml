@@ -1,0 +1,17 @@
+# vim: ts=4 sw=4 et
+imports:
+    - 'cloudify.types'
+
+plugins:
+    cloudify.plugins.openstack_host_provisioner:
+        derived_from: 'cloudify.plugins.remote_plugin'
+        properties:
+            url: 'git@github.com:Fewbytes/cosmo-plugin-openstack-provisioner/archive/master.zip'
+
+
+types:
+    openstack_host:
+        derived_from: cloudify.types.host
+        interfaces:
+            cloudify.interfaces.lifecycle:
+                - create: cloudify.plugins.openstack_host_provisioner.tasks.provision

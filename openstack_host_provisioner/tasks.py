@@ -8,6 +8,7 @@ import sys
 import json
 
 from novaclient.v1_1 import client
+from novaclient import exceptions as nova_exceptions
 from celery import task
 
 from celery.utils.log import get_task_logger
@@ -18,9 +19,11 @@ __author__ = 'elip'
 
 logger = get_task_logger(__name__)
 
+MUST_SPECIFY_NETWORK_EXCEPTION_TEXT = 'Multiple possible networks found'
+
 
 @task
-def provision(__cloudify_id, nova_config, management_network_name, **kwargs):
+def provision(__cloudify_id, nova_config, management_network_name=None, **kwargs):
 
     """
     Creates a server. Exposes the parameters mentioned in
@@ -57,8 +60,9 @@ def provision(__cloudify_id, nova_config, management_network_name, **kwargs):
 
     nc = os_common.NeutronClient().get()
 
-    net_id = nc.cosmo_get_object_of_type_with_name('network', management_network_name)['id']
-    nova_instance['nics'] = [{'net-id': net_id}]
+    if management_network_name:
+        net_id = nc.cosmo_get_named('network', management_network_name)['id']
+        nova_instance['nics'] = [{'net-id': net_id}]
     # print(nova_instance['nics'])
 
     nova_client = os_common.NovaClient().get(region=nova_config['region'])
@@ -95,7 +99,17 @@ def provision(__cloudify_id, nova_config, management_network_name, **kwargs):
     logger.debug("Asking Nova to create server. All possible parameters are: "
                  "{0})".format(','.join(params.keys())))
 
-    nova_client.servers.create(**params)
+    try:
+        nova_client.servers.create(**params)
+    except nova_exceptions.BadRequest as e:
+        if str(e).startswith(MUST_SPECIFY_NETWORK_EXCEPTION_TEXT):
+            raise RuntimeError(
+                "Can not provision server: management_network_name is not "
+                "specified but there are several networks that the server "
+                "can be connected to."
+            )
+        raise e
+
 
 
 @task
@@ -175,8 +189,23 @@ def connect_network(__source_properties, __target_properties, **kwargs):
     nova_client = os_common.NovaClient().get(region=nova_config['region'])
 
     server = _get_server_by_name_or_fail(nova_client, nova_config['instance']['name'])
-    network = os_common.NeutronClient().get().cosmo_get_object_of_type_with_name('network', network['name'])
+    network = os_common.NeutronClient().get().cosmo_get_named('network', network['name'])
     server.interface_attach(None, network['id'], None)
+
+@task
+def disconnect_network(__source_properties, __target_properties, **kwargs):
+    network = __source_properties['network']
+    nova_config = __target_properties['nova_config']
+
+    nova_client = os_common.NovaClient().get(region=nova_config['region'])
+    neutron_client = os_common.NeutronClient().get()
+
+    server = _get_server_by_name_or_fail(nova_client, nova_config['instance']['name'])
+    network = neutron_client.cosmo_get_named('network', network['name'])
+
+    port = neutron_client.cosmo_get('port', network_id=network['id'], device_id=server.id)
+
+    server.interface_detach(port['id'])
 
 
 def _get_server_by_name(nova_client, name):
